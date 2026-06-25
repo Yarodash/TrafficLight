@@ -74,15 +74,90 @@ class TrafficLight:
                                 bg=TRANSP, highlightthickness=0)
         self.canvas.pack()
 
+        self._alpha = 1.0
+        root.wm_attributes("-alpha", self._alpha)
+
         self.canvas.bind("<ButtonPress-1>", self._drag_start)
         self.canvas.bind("<B1-Motion>",     self._drag_move)
-        self.canvas.bind("<Button-3>",      lambda e: self._on_close())
+        self.canvas.bind("<Button-3>",      self._show_menu)
 
         root.update_idletasks()
         sw = root.winfo_screenwidth()
         root.geometry(f"{CANVAS_W}x{CANVAS_H}+{sw - CANVAS_W - 10}+10")
         self._render("green")
         self._poll()
+
+    def _show_menu(self, e: tk.Event) -> None:
+        menu = tk.Toplevel(self.root)
+        menu.overrideredirect(True)
+        menu.wm_attributes("-topmost", True)
+        menu.wm_attributes("-transparentcolor", TRANSP)
+        menu.configure(bg=TRANSP)
+
+        W, H, R = 190, 100, 10
+
+        c = tk.Canvas(menu, width=W, height=H, bg=TRANSP, highlightthickness=0)
+        c.pack()
+
+        # фон панели
+        draw_rounded_rect(c, 0, 0, W, H, R, "#22223a", outline="#3a3a60")
+
+        # подпись
+        c.create_text(14, 16, text="Прозрачность", anchor="w",
+                      fill="#8888aa", font=("Segoe UI", 8))
+
+        # кастомный слайдер на canvas
+        SX, SY, SW, SH = 14, 30, W - 28, 8
+        track = c.create_rectangle(SX, SY, SX+SW, SY+SH,
+                                   fill="#13132a", outline="#2a2a50", width=1)
+        fill_w = int(SW * self._alpha)
+        fill  = c.create_rectangle(SX, SY, SX+fill_w, SY+SH,
+                                   fill="#5555cc", outline="")
+        knob_x = SX + fill_w
+        knob = c.create_oval(knob_x-7, SY-4, knob_x+7, SY+SH+4,
+                             fill="#9999ff", outline="#5555cc", width=1)
+
+        def update_slider(x: int) -> None:
+            x = max(SX, min(SX+SW, x))
+            alpha = (x - SX) / SW
+            self._alpha = alpha
+            self.root.wm_attributes("-alpha", alpha)
+            c.coords(fill, SX, SY, x, SY+SH)
+            c.coords(knob, x-7, SY-4, x+7, SY+SH+4)
+
+        c.bind("<ButtonPress-1>",  lambda ev: update_slider(ev.x))
+        c.bind("<B1-Motion>",      lambda ev: update_slider(ev.x))
+
+        # кнопка закрыть
+        BTN_Y = 66
+        btn_bg = c.create_rectangle(14, BTN_Y, W-14, BTN_Y+24,
+                                    fill="#2d1010", outline="#5a2020", width=1)
+        btn_txt = c.create_text(W//2, BTN_Y+12, text="✕  Закрыть",
+                                fill="#ff6b6b", font=("Segoe UI", 9))
+
+        def btn_hover(col_bg: str, col_txt: str) -> None:
+            c.itemconfig(btn_bg, fill=col_bg)
+            c.itemconfig(btn_txt, fill=col_txt)
+
+        c.tag_bind(btn_bg,  "<Enter>",  lambda _: btn_hover("#4a1515", "#ff9090"))
+        c.tag_bind(btn_txt, "<Enter>",  lambda _: btn_hover("#4a1515", "#ff9090"))
+        c.tag_bind(btn_bg,  "<Leave>",  lambda _: btn_hover("#2d1010", "#ff6b6b"))
+        c.tag_bind(btn_txt, "<Leave>",  lambda _: btn_hover("#2d1010", "#ff6b6b"))
+        c.tag_bind(btn_bg,  "<Button-1>", lambda _: [menu.destroy(), self._on_close()])
+        c.tag_bind(btn_txt, "<Button-1>", lambda _: [menu.destroy(), self._on_close()])
+
+        menu.update_idletasks()
+        mx = e.x_root - W - 6
+        if mx < 0:
+            mx = e.x_root + 6
+        menu.geometry(f"{W}x{H}+{mx}+{e.y_root - H//2}")
+
+        menu.bind("<FocusOut>", lambda _: menu.destroy())
+        menu.focus_set()
+
+    def _set_alpha(self, val: str) -> None:
+        self._alpha = int(val) / 100
+        self.root.wm_attributes("-alpha", self._alpha)
 
     def _drag_start(self, e: tk.Event) -> None:
         self._drag_x = e.x
