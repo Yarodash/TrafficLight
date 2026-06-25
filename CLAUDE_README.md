@@ -13,7 +13,7 @@
       {
         "type": "command",
         "shell": "powershell",
-        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; $mutex = [System.Threading.Mutex]::new($false, \"TrafficLight_$sid\"); try {   try { $mutex.WaitOne(5000) | Out-Null } catch {};   $skip = $false;   if (Test-Path $f) {     try { $old = [IO.File]::ReadAllText($f).Trim() } catch { $old = \"\" };     if ($old -and (Test-Path \"$env:USERPROFILE\\.trafficlight\\$old.json\")) { $skip = $true }   };   if (-not $skip) {     $id = python \"D:/TrafficLight/cli.py\" --create;     for ($i=0; $i -lt 20; $i++) { try { [IO.File]::WriteAllText($f, $id); break } catch { Start-Sleep -Milliseconds 50 } }   } } finally {   try { $mutex.ReleaseMutex() } catch {};   $mutex.Dispose() }",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; $id = python \"D:/TrafficLight/cli.py\" --create; for ($i=0; $i -lt 20; $i++) { try { [IO.File]::WriteAllText($f, $id); break } catch { Start-Sleep -Milliseconds 50 } }",
         "statusMessage": "Starting TrafficLight..."
       }
     ]

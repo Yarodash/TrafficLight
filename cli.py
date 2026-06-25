@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import tempfile
 import subprocess
 import secrets
@@ -90,34 +91,115 @@ def _find_claude_pid() -> int | None:
     return None
 
 
-def cmd_create() -> None:
+def _find_existing_light(claude_pid: int) -> str | None:
+    """Return the ID of a live light already watching this claude_pid, else None."""
+    if _psutil is None:
+        return None
+    d = _state_dir()
+    if not d.exists():
+        return None
+    for state_file in d.glob("*.json"):
+        try:
+            data = json.loads(state_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if data.get("watch_pid") != claude_pid:
+            continue
+        window_pid = data.get("window_pid")
+        if window_pid and _psutil.pid_exists(window_pid):
+            return state_file.stem
+        # Stale entry — window died without cleanup. Remove so we recreate.
+        try:
+            state_file.unlink()
+        except OSError:
+            pass
+    return None
+
+
+def _acquire_create_lock(timeout_s: float = 10.0):
+    """Atomic file lock so two concurrent --create calls don't both spawn a window."""
+    d = _state_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    lock_path = d / ".create.lock"
+    deadline = time.monotonic() + timeout_s
     while True:
-        id = secrets.token_hex(2)
-        if not state_path(id).exists():
-            break
-    write_state(id, {"color": "green", "command": None})
-    proj_dir = Path(__file__).parent
-    window_path = proj_dir / "window.py"
-    uv = proj_dir / ".venv" / "Scripts" / "pythonw.exe"
-    if not uv.exists():
-        uv = proj_dir / ".venv" / "bin" / "pythonw"
-    if not uv.exists():
-        uv = Path(sys.executable)
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            return fd, lock_path
+        except FileExistsError:
+            try:
+                if time.time() - lock_path.stat().st_mtime > 30:
+                    lock_path.unlink()
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                return None, lock_path
+            time.sleep(0.05)
 
-    cmd = [str(uv), str(window_path), id]
-    claude_pid = _find_claude_pid()
-    if claude_pid:
-        cmd += ["--watch-pid", str(claude_pid)]
 
-    if sys.platform == "win32":
-        subprocess.Popen(
-            cmd,
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-            close_fds=True,
-        )
-    else:
-        subprocess.Popen(cmd, start_new_session=True)
-    print(id)
+def _release_create_lock(fd, lock_path: Path) -> None:
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    try:
+        lock_path.unlink()
+    except OSError:
+        pass
+
+
+def cmd_create() -> None:
+    lock_fd, lock_path = _acquire_create_lock()
+    try:
+        claude_pid = _find_claude_pid()
+
+        if claude_pid:
+            existing = _find_existing_light(claude_pid)
+            if existing:
+                print(existing)
+                return
+
+        while True:
+            id = secrets.token_hex(2)
+            if not state_path(id).exists():
+                break
+
+        proj_dir = Path(__file__).parent
+        window_path = proj_dir / "window.py"
+        uv = proj_dir / ".venv" / "Scripts" / "pythonw.exe"
+        if not uv.exists():
+            uv = proj_dir / ".venv" / "bin" / "pythonw"
+        if not uv.exists():
+            uv = Path(sys.executable)
+
+        cmd = [str(uv), str(window_path), id]
+        if claude_pid:
+            cmd += ["--watch-pid", str(claude_pid)]
+
+        write_state(id, {
+            "color": "green",
+            "command": None,
+            "watch_pid": claude_pid,
+        })
+
+        if sys.platform == "win32":
+            proc = subprocess.Popen(
+                cmd,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+            )
+        else:
+            proc = subprocess.Popen(cmd, start_new_session=True)
+
+        state = read_state(id) or {}
+        state["window_pid"] = proc.pid
+        write_state(id, state)
+
+        print(id)
+    finally:
+        _release_create_lock(lock_fd, lock_path)
 
 
 def main() -> int:

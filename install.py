@@ -84,28 +84,11 @@ def main() -> None:
     read_id  = 'try { $id = [IO.File]::ReadAllText($f).Trim() } catch { $id = "" }'
     write_id = 'for ($i=0; $i -lt 20; $i++) { try { [IO.File]::WriteAllText($f, $id); break } catch { Start-Sleep -Milliseconds 50 } }'
 
-    # SessionStart can fire multiple times per Claude session (startup + resume/clear),
-    # potentially concurrently. Serialize with a named mutex, and skip create if a
-    # live light already exists (state file ~/.trafficlight/<id>.json exists until
-    # the window deletes it on close).
+    # Dedup happens inside cli.py (per Claude PID, with a file lock) so SessionStart
+    # can fire multiple times with different session_ids without spawning extras —
+    # cli.py just returns the existing light's ID.
     session_start_cmd = (
-        f'{sid_prefix}'
-        f' $mutex = [System.Threading.Mutex]::new($false, "TrafficLight_$sid");'
-        f' try {{'
-        f'   try {{ $mutex.WaitOne(5000) | Out-Null }} catch {{}};'
-        f'   $skip = $false;'
-        f'   if (Test-Path $f) {{'
-        f'     try {{ $old = [IO.File]::ReadAllText($f).Trim() }} catch {{ $old = "" }};'
-        f'     if ($old -and (Test-Path "$env:USERPROFILE\\.trafficlight\\$old.json")) {{ $skip = $true }}'
-        f'   }};'
-        f'   if (-not $skip) {{'
-        f'     $id = python "{cli}" --create;'
-        f'     {write_id}'
-        f'   }}'
-        f' }} finally {{'
-        f'   try {{ $mutex.ReleaseMutex() }} catch {{}};'
-        f'   $mutex.Dispose()'
-        f' }}'
+        f'{sid_prefix} $id = python "{cli}" --create; {write_id}'
     )
 
     def _group(hook_dict: dict) -> dict:
