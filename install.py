@@ -79,31 +79,36 @@ def main() -> None:
     sid_file   = '"$env:USERPROFILE\\.claude\\traffic_$sid.txt"'
     sid_prefix = f'$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace \'[^A-Za-z0-9-]\', \'\'; $f = {sid_file};'
 
+    # File I/O via .NET to avoid PowerShell's lazy handle release (Get-Content) and
+    # exclusive-write default (Out-File) that race against concurrent hooks.
+    read_id  = 'try { $id = [IO.File]::ReadAllText($f).Trim() } catch { $id = "" }'
+    write_id = 'for ($i=0; $i -lt 20; $i++) { try { [IO.File]::WriteAllText($f, $id); break } catch { Start-Sleep -Milliseconds 50 } }'
+
     def _group(hook_dict: dict) -> dict:
         return {"hooks": [hook_dict]}
 
     new_hooks: dict[str, list] = {
         "SessionStart": [_group(
             _hook(
-                f'{sid_prefix} if (Test-Path $f) {{ $old = (Get-Content $f).Trim();'
-                f' python "{cli}" --manage $old --exit 2>$null }};'
-                f' $id = python "{cli}" --create; $id | Out-File -FilePath $f -NoNewline -Encoding UTF8'
+                f'{sid_prefix} if (Test-Path $f) {{ try {{ $old = [IO.File]::ReadAllText($f).Trim() }} catch {{ $old = "" }};'
+                f' if ($old) {{ python "{cli}" --manage $old --exit 2>$null }} }};'
+                f' $id = python "{cli}" --create; {write_id}'
             ) | {"statusMessage": "Starting TrafficLight..."}
         )],
         "UserPromptSubmit": [_group(
-            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color red }}')
+            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ {read_id}; if ($id) {{ python "{cli}" --manage $id --set-color red }} }}')
         )],
         "PreToolUse": [_group(
-            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color red }}')
+            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ {read_id}; if ($id) {{ python "{cli}" --manage $id --set-color red }} }}')
         )],
         "PostToolUse": [_group(
-            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color red }}')
+            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ {read_id}; if ($id) {{ python "{cli}" --manage $id --set-color red }} }}')
         )],
         "Stop": [_group(
-            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color yellow; Start-Sleep 1; python "{cli}" --manage $id --set-color green }}')
+            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ {read_id}; if ($id) {{ python "{cli}" --manage $id --set-color yellow; Start-Sleep 1; python "{cli}" --manage $id --set-color green }} }}')
         )],
         "Notification": [_group(
-            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color yellow; Start-Sleep 1; python "{cli}" --manage $id --set-color green }}')
+            _async_hook(f'{sid_prefix} if (Test-Path $f) {{ {read_id}; if ($id) {{ python "{cli}" --manage $id --set-color yellow; Start-Sleep 1; python "{cli}" --manage $id --set-color green }} }}')
         )],
     }
 

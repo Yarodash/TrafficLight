@@ -13,7 +13,7 @@
       {
         "type": "command",
         "shell": "powershell",
-        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $old = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $old --exit 2>$null }; $id = python D:/TrafficLight/cli.py --create; $id | Out-File -FilePath $f -NoNewline -Encoding UTF8",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { try { $old = [IO.File]::ReadAllText($f).Trim() } catch { $old = \"\" }; if ($old) { python \"D:/TrafficLight/cli.py\" --manage $old --exit 2>$null } }; $id = python \"D:/TrafficLight/cli.py\" --create; for ($i=0; $i -lt 20; $i++) { try { [IO.File]::WriteAllText($f, $id); break } catch { Start-Sleep -Milliseconds 50 } }",
         "statusMessage": "Starting TrafficLight..."
       }
     ]
@@ -25,7 +25,7 @@
       {
         "type": "command",
         "shell": "powershell",
-        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color red }",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { try { $id = [IO.File]::ReadAllText($f).Trim() } catch { $id = \"\" }; if ($id) { python \"D:/TrafficLight/cli.py\" --manage $id --set-color red } }",
         "async": true
       }
     ]
@@ -37,7 +37,7 @@
       {
         "type": "command",
         "shell": "powershell",
-        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color red }",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { try { $id = [IO.File]::ReadAllText($f).Trim() } catch { $id = \"\" }; if ($id) { python \"D:/TrafficLight/cli.py\" --manage $id --set-color red } }",
         "async": true
       }
     ]
@@ -49,7 +49,7 @@
       {
         "type": "command",
         "shell": "powershell",
-        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color red }",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { try { $id = [IO.File]::ReadAllText($f).Trim() } catch { $id = \"\" }; if ($id) { python \"D:/TrafficLight/cli.py\" --manage $id --set-color red } }",
         "async": true
       }
     ]
@@ -61,7 +61,7 @@
       {
         "type": "command",
         "shell": "powershell",
-        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color yellow; Start-Sleep 1; python D:/TrafficLight/cli.py --manage $id --set-color green }",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { try { $id = [IO.File]::ReadAllText($f).Trim() } catch { $id = \"\" }; if ($id) { python \"D:/TrafficLight/cli.py\" --manage $id --set-color yellow; Start-Sleep 1; python \"D:/TrafficLight/cli.py\" --manage $id --set-color green } }",
         "async": true
       }
     ]
@@ -73,7 +73,7 @@
       {
         "type": "command",
         "shell": "powershell",
-        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color yellow; Start-Sleep 1; python D:/TrafficLight/cli.py --manage $id --set-color green }",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { try { $id = [IO.File]::ReadAllText($f).Trim() } catch { $id = \"\" }; if ($id) { python \"D:/TrafficLight/cli.py\" --manage $id --set-color yellow; Start-Sleep 1; python \"D:/TrafficLight/cli.py\" --manage $id --set-color green } }",
         "async": true
       }
     ]
