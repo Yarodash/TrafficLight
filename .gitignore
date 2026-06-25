@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.python-version
+.serena/
+.superpowers/
+
+# debug/source images — not needed for the app
+image.png
+overlap.png

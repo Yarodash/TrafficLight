@@ -2,47 +2,62 @@
 
 Визуальный индикатор статуса. Запускай при старте сессии.
 
-## Старт сессии
+## Глобальные хуки (уже настроены)
 
-**Bash:**
-```bash
-TRAFFIC_ID=$(python D:/TrafficLight/cli.py --create)
-```
+Хуки прописаны в `~/.claude/settings.json` и работают автоматически во всех проектах:
 
-**PowerShell:**
+| Хук | Действие |
+|-----|----------|
+| `SessionStart` | Создаёт светофор, привязывает к `session_id` |
+| `UserPromptSubmit` | → Красный |
+| `PreToolUse` | → Красный |
+| `PostToolUse` | → Красный |
+| `Stop` | → Жёлтый → Зелёный |
+| `Notification` | → Жёлтый → Зелёный |
+
+ID светофора хранится в `~/.claude/traffic_<session_id>.txt`. Несколько сессий — несколько независимых светофоров.
+
+**Если хуки работают — `--create` вручную не нужен.** Светофор стартует сам при открытии сессии.
+
+## Ручное управление (если нужно)
+
 ```powershell
-$env:TRAFFIC_ID = python D:/TrafficLight/cli.py --create
+$id = python D:/TrafficLight/cli.py --create
+python D:/TrafficLight/cli.py --manage $id --set-color red
+python D:/TrafficLight/cli.py --manage $id --set-color yellow
+python D:/TrafficLight/cli.py --manage $id --set-color green
+python D:/TrafficLight/cli.py --manage $id --exit
 ```
 
 ## Цвета
 
-| Цвет | Когда ставить |
-|------|---------------|
-| 🔴 Красный | Сразу как пользователь что-то написал / дал задачу — первое действие в ответе |
-| 🟡 Жёлтый | Всегда перед зелёным — анимация перехода |
-| 🟢 Зелёный | Работа завершена ИЛИ нужен ввод пользователя |
+| Цвет | Когда |
+|------|-------|
+| 🔴 Красный | Пользователь написал / инструмент работает |
+| 🟡 Жёлтый | Переход к зелёному (анимация) |
+| 🟢 Зелёный | Задача завершена / ожидание ввода |
 
-### Паттерны использования
+## Окно (ПКМ → меню)
 
-**Получил сообщение:**
-```bash
-python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --set-color red
+- **Прозрачность** — слайдер 20–100%
+- **Инверсия** — красный↔зелёный (жёлтый не меняется)
+- **Авто-фокус на зелёный** — при переходе на зелёный фокусирует терминал с Claude Code
+- **Закрыть** — закрывает окно
+
+Перетаскивание — ЛКМ.
+
+## Установка зависимостей (однократно)
+
+```powershell
+cd D:/TrafficLight
+uv sync
 ```
 
-**Завершил задачу / жду ввода (всегда через жёлтый):**
-```bash
-python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --set-color yellow && sleep 2 && python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --set-color green
-```
-
-## Конец сессии
-
-```bash
-python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --exit
-```
+Требуется [uv](https://docs.astral.sh/uv/). Зависимости (`pyqt6`, `pillow`, `numpy`) ставятся в `.venv`.
 
 ## Заметки
 
-- Закрытие окна = конец сессии, нужен новый `--create`
+- Закрытие окна = конец сессии (хук SessionStart создаст новый при следующем открытии)
 - Если `--manage` говорит "not found" — окно закрыто, запусти `--create` заново
-- Окно всегда поверх всех окон, в правом верхнем углу
-- Без pip-зависимостей
+- Окно всегда поверх всех, в правом верхнем углу
+- Запускается через `.venv/Scripts/pythonw.exe` (без консоли)

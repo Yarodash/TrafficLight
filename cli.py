@@ -7,6 +7,11 @@ import secrets
 import argparse
 from pathlib import Path
 
+try:
+    import psutil as _psutil
+except ImportError:
+    _psutil = None
+
 
 def _state_dir() -> Path:
     return Path.home() / ".trafficlight"
@@ -60,27 +65,58 @@ Colors:
 """
 
 
+def _find_claude_pid() -> int | None:
+    """Walk the process tree upward looking for a Claude Code process."""
+    if _psutil is None:
+        return None
+    try:
+        proc = _psutil.Process(os.getpid())
+        for _ in range(12):
+            proc = proc.parent()
+            if proc is None or proc.pid <= 4:
+                break
+            if "claude" in proc.name().lower():
+                return proc.pid
+    except (_psutil.NoSuchProcess, _psutil.AccessDenied, OSError):
+        pass
+    # Fallback: scan all processes
+    try:
+        for p in _psutil.process_iter(["pid", "name"]):
+            name = (p.info["name"] or "").lower()
+            if "claude" in name and p.pid != os.getpid():
+                return p.pid
+    except Exception:
+        pass
+    return None
+
+
 def cmd_create() -> None:
     while True:
         id = secrets.token_hex(2)
         if not state_path(id).exists():
             break
     write_state(id, {"color": "green", "command": None})
-    window_path = Path(__file__).parent / "window.py"
+    proj_dir = Path(__file__).parent
+    window_path = proj_dir / "window.py"
+    uv = proj_dir / ".venv" / "Scripts" / "pythonw.exe"
+    if not uv.exists():
+        uv = proj_dir / ".venv" / "bin" / "pythonw"
+    if not uv.exists():
+        uv = Path(sys.executable)
+
+    cmd = [str(uv), str(window_path), id]
+    claude_pid = _find_claude_pid()
+    if claude_pid:
+        cmd += ["--watch-pid", str(claude_pid)]
+
     if sys.platform == "win32":
-        exe = sys.executable.replace("python.exe", "pythonw.exe")
-        if not Path(exe).exists():
-            exe = sys.executable
         subprocess.Popen(
-            [exe, str(window_path), id],
+            cmd,
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
             close_fds=True,
         )
     else:
-        subprocess.Popen(
-            [sys.executable, str(window_path), id],
-            start_new_session=True,
-        )
+        subprocess.Popen(cmd, start_new_session=True)
     print(id)
 
 

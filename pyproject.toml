@@ -1,0 +1,11 @@
+[project]
+name = "trafficlight"
+version = "0.1.0"
+description = "Visual traffic light status indicator for Claude Code"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.5.0",
+    "pillow>=12.2.0",
+    "pyqt6>=6.11.0",
+]
