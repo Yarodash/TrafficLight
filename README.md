@@ -2,8 +2,6 @@
 
 Visual status indicator for [Claude Code](https://claude.ai/code). A small always-on-top window showing a traffic light that reflects what Claude is doing.
 
-![preview](image.png)
-
 ## What it does
 
 | Color | Meaning |
