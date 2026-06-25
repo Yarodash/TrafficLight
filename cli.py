@@ -57,6 +57,7 @@ Commands:
   cli.py --manage <id> --set-color red|yellow|green
                                          Change light color
   cli.py --manage <id> --exit            Close the traffic light window
+  cli.py --cleanup                       Kill orphan lights whose Claude is gone
   cli.py help                            Show this help
 
 Colors:
@@ -150,9 +151,64 @@ def _release_create_lock(fd, lock_path: Path) -> None:
         pass
 
 
+def cmd_cleanup() -> int:
+    """Kill orphan window.py processes (Claude is gone) and prune stale state files.
+
+    Returns the number of orphans killed.
+    """
+    if _psutil is None:
+        return 0
+    killed = 0
+    for p in _psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            name = (p.info["name"] or "").lower()
+            if name not in ("pythonw.exe", "pythonw", "python.exe", "python"):
+                continue
+            cmdline = p.info["cmdline"] or []
+            if not any("window.py" in arg for arg in cmdline):
+                continue
+            watch_pid = None
+            for i, arg in enumerate(cmdline):
+                if arg == "--watch-pid" and i + 1 < len(cmdline):
+                    try:
+                        watch_pid = int(cmdline[i + 1])
+                    except ValueError:
+                        pass
+                    break
+            if watch_pid is None or _psutil.pid_exists(watch_pid):
+                continue
+            try:
+                p.kill()
+                killed += 1
+            except (_psutil.NoSuchProcess, _psutil.AccessDenied):
+                pass
+        except (_psutil.NoSuchProcess, _psutil.AccessDenied):
+            continue
+
+    d = _state_dir()
+    if d.exists():
+        for state_file in d.glob("*.json"):
+            try:
+                data = json.loads(state_file.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            window_pid = data.get("window_pid")
+            watch_pid  = data.get("watch_pid")
+            stale = (window_pid and not _psutil.pid_exists(window_pid)) or \
+                    (watch_pid  and not _psutil.pid_exists(watch_pid))
+            if stale:
+                try:
+                    state_file.unlink()
+                except OSError:
+                    pass
+    return killed
+
+
 def cmd_create() -> None:
     lock_fd, lock_path = _acquire_create_lock()
     try:
+        cmd_cleanup()
+
         claude_pid = _find_claude_pid()
 
         if claude_pid:
@@ -211,6 +267,7 @@ def main() -> int:
     subgroup = parser.add_mutually_exclusive_group(required=True)
     subgroup.add_argument("--create", action="store_true")
     subgroup.add_argument("--manage", metavar="ID")
+    subgroup.add_argument("--cleanup", action="store_true")
 
     color_exit = parser.add_mutually_exclusive_group()
     color_exit.add_argument("--set-color", choices=["red", "yellow", "green"])
@@ -220,6 +277,11 @@ def main() -> int:
 
     if args.create:
         cmd_create()
+        return 0
+
+    if args.cleanup:
+        n = cmd_cleanup()
+        print(f"Killed {n} orphan light(s)")
         return 0
 
     if args.manage:

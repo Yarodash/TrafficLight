@@ -398,6 +398,17 @@ class TrafficLight(QLabel):
         self._auto_focus   = False
         self._chart_win: ChartWindow | None = None
 
+        # Snapshot the watched Claude process so a PID reuse later doesn't
+        # keep us alive forever after the real Claude has exited.
+        self._watch_proc = None
+        self._watch_ctime: float | None = None
+        if self.watch_pid and _psutil:
+            try:
+                self._watch_proc  = _psutil.Process(self.watch_pid)
+                self._watch_ctime = self._watch_proc.create_time()
+            except (_psutil.NoSuchProcess, _psutil.AccessDenied, OSError):
+                self._watch_proc = None
+
         # time tracking
         _now = time.time()
         self._history: list[tuple[float, str]] = [(_now, "green")]
@@ -443,20 +454,48 @@ class TrafficLight(QLabel):
             if color == "green" and self._auto_focus and self.watch_pid:
                 _focus_pid_window(self.watch_pid)
 
+    def _watch_dead(self) -> bool:
+        """True iff the original Claude process is gone (and not a PID reuse)."""
+        if not self._watch_proc:
+            return False
+        try:
+            if not self._watch_proc.is_running():
+                return True
+            if self._watch_ctime is not None and self._watch_proc.create_time() != self._watch_ctime:
+                return True
+        except (_psutil.NoSuchProcess, _psutil.AccessDenied, OSError):
+            return True
+        return False
+
+    def _shutdown(self, drop_state: bool = True) -> None:
+        if drop_state:
+            try:
+                state_path(self.id).unlink(missing_ok=True)
+            except OSError:
+                pass
+        if self._chart_win:
+            try:
+                self._chart_win.close()
+            except Exception:
+                pass
+            self._chart_win = None
+        self.close()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
     def _poll(self) -> None:
         try:
-            if self.watch_pid and _psutil and not _psutil.pid_exists(self.watch_pid):
-                state_path(self.id).unlink(missing_ok=True)
-                self.close()
+            if self._watch_dead():
+                self._shutdown(drop_state=True)
                 return
             p = state_path(self.id)
             if not p.exists():
-                self.close()
+                self._shutdown(drop_state=False)
                 return
             data = json.loads(p.read_text())
             if data.get("command") == "exit":
-                p.unlink(missing_ok=True)
-                self.close()
+                self._shutdown(drop_state=True)
                 return
             color = data.get("color", self.current_color)
             if color != self.current_color:
@@ -521,11 +560,7 @@ class TrafficLight(QLabel):
         self._set_color(self.current_color)
 
     def _do_close(self) -> None:
-        try:
-            state_path(self.id).unlink(missing_ok=True)
-        except OSError:
-            pass
-        self.close()
+        self._shutdown(drop_state=True)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:

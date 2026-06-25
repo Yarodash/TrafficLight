@@ -90,13 +90,50 @@ def test_create_lock_serializes(tmp_path, monkeypatch):
     _release_create_lock(fd3, p3)
 
 
+def test_cmd_cleanup_kills_orphans_and_prunes_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    # State files: one with live claude (1234), one with dead claude (9999)
+    write_state("alive", {"color": "green", "watch_pid": 1234, "window_pid": 100})
+    write_state("dead",  {"color": "green", "watch_pid": 9999, "window_pid": 200})
+
+    killed_pids = []
+    class FakeProc:
+        def __init__(self, pid, cmdline):
+            self.pid = pid
+            self.info = {"pid": pid, "name": "pythonw.exe", "cmdline": cmdline}
+        def kill(self):
+            killed_pids.append(self.pid)
+
+    procs = [
+        FakeProc(100, ["pythonw.exe", "window.py", "alive", "--watch-pid", "1234"]),
+        FakeProc(200, ["pythonw.exe", "window.py", "dead",  "--watch-pid", "9999"]),
+        FakeProc(300, ["pythonw.exe", "other_script.py"]),  # unrelated
+    ]
+    fake_psutil = mock.Mock()
+    fake_psutil.pid_exists = lambda pid: pid in {1234, 100, 200, 300}  # 9999 dead
+    fake_psutil.process_iter = lambda fields=None: iter(procs)
+    fake_psutil.NoSuchProcess = type("NoSuchProcess", (Exception,), {})
+    fake_psutil.AccessDenied = type("AccessDenied", (Exception,), {})
+    monkeypatch.setattr(cli, "_psutil", fake_psutil)
+
+    killed = cli.cmd_cleanup()
+    assert killed == 1
+    assert killed_pids == [200]
+    # stale state file removed
+    assert not state_path("dead").exists()
+    # live state file kept
+    assert state_path("alive").exists()
+
+
 def test_cmd_create_dedup_returns_existing_id(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     # Pre-existing state for claude_pid=1234
     write_state("dd44", {"color": "green", "watch_pid": 1234, "window_pid": 5678})
     fake_psutil = mock.Mock()
-    fake_psutil.pid_exists = lambda pid: pid == 5678
+    fake_psutil.pid_exists = lambda pid: pid == 5678 or pid == 1234
+    fake_psutil.process_iter = lambda fields=None: iter([])
     monkeypatch.setattr(cli, "_psutil", fake_psutil)
     monkeypatch.setattr(cli, "_find_claude_pid", lambda: 1234)
     # Popen should NOT be called when dedup hits
