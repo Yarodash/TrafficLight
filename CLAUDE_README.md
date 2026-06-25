@@ -16,11 +16,23 @@ $env:TRAFFIC_ID = python D:/TrafficLight/cli.py --create
 
 ## Цвета
 
-| Цвет | Когда ставить | Команда |
-|------|---------------|---------|
-| 🔴 Красный | Сразу как получил сообщение от юзера — агент думает | `python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --set-color red` |
-| 🟡 Жёлтый | Агент работает над задачей, может понадобиться спросить | `python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --set-color yellow` |
-| 🟢 Зелёный | Задача выполнена или нужен ввод пользователя | `python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --set-color green` |
+| Цвет | Когда ставить |
+|------|---------------|
+| 🔴 Красный | Сразу как пользователь что-то написал / дал задачу — первое действие в ответе |
+| 🟡 Жёлтый | Всегда перед зелёным — анимация перехода |
+| 🟢 Зелёный | Работа завершена ИЛИ нужен ввод пользователя |
+
+### Паттерны использования
+
+**Получил сообщение:**
+```bash
+python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --set-color red
+```
+
+**Завершил задачу / жду ввода (всегда через жёлтый):**
+```bash
+python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --set-color yellow && sleep 2 && python D:/TrafficLight/cli.py --manage $TRAFFIC_ID --set-color green
+```
 
 ## Конец сессии
 
