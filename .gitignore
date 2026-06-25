@@ -5,6 +5,5 @@ __pycache__/
 .serena/
 .superpowers/
 
-# debug/source images — not needed for the app
-image.png
+# debug image
 overlap.png
