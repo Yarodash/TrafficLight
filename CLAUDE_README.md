@@ -2,32 +2,88 @@
 
 Визуальный индикатор статуса. Запускай при старте сессии.
 
-## Глобальные хуки (уже настроены)
+## Глобальные хуки
 
-Хуки прописаны в `~/.claude/settings.json` и работают автоматически во всех проектах:
+Добавь в `~/.claude/settings.json` в секцию `"hooks"`:
 
-| Хук | Действие |
-|-----|----------|
-| `SessionStart` | Создаёт светофор, привязывает к `session_id` |
-| `UserPromptSubmit` | → Красный |
-| `PreToolUse` | → Красный |
-| `PostToolUse` | → Красный |
-| `Stop` | → Жёлтый → Зелёный |
-| `Notification` | → Жёлтый → Зелёный |
+```json
+"SessionStart": [
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "shell": "powershell",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $old = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $old --exit 2>$null }; $id = python D:/TrafficLight/cli.py --create; $id | Out-File -FilePath $f -NoNewline -Encoding UTF8",
+        "statusMessage": "Starting TrafficLight..."
+      }
+    ]
+  }
+],
+"UserPromptSubmit": [
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "shell": "powershell",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color red }",
+        "async": true
+      }
+    ]
+  }
+],
+"PreToolUse": [
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "shell": "powershell",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color red }",
+        "async": true
+      }
+    ]
+  }
+],
+"PostToolUse": [
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "shell": "powershell",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color red }",
+        "async": true
+      }
+    ]
+  }
+],
+"Stop": [
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "shell": "powershell",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color yellow; Start-Sleep 1; python D:/TrafficLight/cli.py --manage $id --set-color green }",
+        "async": true
+      }
+    ]
+  }
+],
+"Notification": [
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "shell": "powershell",
+        "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace '[^A-Za-z0-9-]', ''; $f = \"$env:USERPROFILE\\.claude\\traffic_$sid.txt\"; if (Test-Path $f) { $id = (Get-Content $f).Trim(); python D:/TrafficLight/cli.py --manage $id --set-color yellow; Start-Sleep 1; python D:/TrafficLight/cli.py --manage $id --set-color green }",
+        "async": true
+      }
+    ]
+  }
+]
+```
+
+> Замени `D:/TrafficLight/cli.py` на свой путь если установил в другое место.
 
 ID светофора хранится в `~/.claude/traffic_<session_id>.txt`. Несколько сессий — несколько независимых светофоров.
-
-**Если хуки работают — `--create` вручную не нужен.** Светофор стартует сам при открытии сессии.
-
-## Ручное управление (если нужно)
-
-```powershell
-$id = python D:/TrafficLight/cli.py --create
-python D:/TrafficLight/cli.py --manage $id --set-color red
-python D:/TrafficLight/cli.py --manage $id --set-color yellow
-python D:/TrafficLight/cli.py --manage $id --set-color green
-python D:/TrafficLight/cli.py --manage $id --exit
-```
 
 ## Цвета
 
@@ -42,22 +98,29 @@ python D:/TrafficLight/cli.py --manage $id --exit
 - **Прозрачность** — слайдер 20–100%
 - **Инверсия** — красный↔зелёный (жёлтый не меняется)
 - **Авто-фокус на зелёный** — при переходе на зелёный фокусирует терминал с Claude Code
+- **График** — накопленное время красного/зелёного за сессию
 - **Закрыть** — закрывает окно
 
 Перетаскивание — ЛКМ.
 
-## Установка зависимостей (однократно)
+## Установка
 
 ```powershell
+python install.py https://github.com/Yarodash/TrafficLight D:/TrafficLight
+```
+
+Или вручную:
+
+```powershell
+git clone https://github.com/Yarodash/TrafficLight D:/TrafficLight
 cd D:/TrafficLight
 uv sync
 ```
 
-Требуется [uv](https://docs.astral.sh/uv/). Зависимости (`pyqt6`, `pillow`, `numpy`) ставятся в `.venv`.
+Требуется [uv](https://docs.astral.sh/uv/).
 
 ## Заметки
 
 - Закрытие окна = конец сессии (хук SessionStart создаст новый при следующем открытии)
-- Если `--manage` говорит "not found" — окно закрыто, запусти `--create` заново
 - Окно всегда поверх всех, в правом верхнем углу
 - Запускается через `.venv/Scripts/pythonw.exe` (без консоли)
