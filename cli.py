@@ -41,3 +41,88 @@ def write_state(id: str, state: dict) -> None:
         except OSError:
             pass
         raise
+
+
+HELP_TEXT = """\
+TrafficLight CLI — visual status indicator for Claude Code
+
+Commands:
+  cli.py --create                        Create new traffic light, print its ID
+  cli.py --manage <id> --set-color red|yellow|green
+                                         Change light color
+  cli.py --manage <id> --exit            Close the traffic light window
+  cli.py help                            Show this help
+
+Colors:
+  red     Agent is thinking hard — user should wait
+  yellow  Agent is working — may need to ask something
+  green   Ready for user input, or task complete
+"""
+
+
+def cmd_create() -> None:
+    while True:
+        id = secrets.token_hex(2)
+        if not state_path(id).exists():
+            break
+    write_state(id, {"color": "green", "command": None})
+    window_path = Path(__file__).parent / "window.py"
+    if sys.platform == "win32":
+        subprocess.Popen(
+            [sys.executable, str(window_path), id],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+    else:
+        subprocess.Popen(
+            [sys.executable, str(window_path), id],
+            start_new_session=True,
+        )
+    print(id)
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "help":
+        print(HELP_TEXT)
+        return 0
+
+    parser = argparse.ArgumentParser(prog="cli.py", add_help=True)
+    subgroup = parser.add_mutually_exclusive_group(required=True)
+    subgroup.add_argument("--create", action="store_true")
+    subgroup.add_argument("--manage", metavar="ID")
+
+    color_exit = parser.add_mutually_exclusive_group()
+    color_exit.add_argument("--set-color", choices=["red", "yellow", "green"])
+    color_exit.add_argument("--exit", action="store_true", dest="do_exit")
+
+    args = parser.parse_args()
+
+    if args.create:
+        cmd_create()
+        return 0
+
+    if args.manage:
+        id = args.manage
+        state = read_state(id)
+        if state is None:
+            print(f"Error: Traffic light '{id}' not found or already closed.", file=sys.stderr)
+            print("To create a new traffic light: cli.py --create", file=sys.stderr)
+            return 1
+
+        if args.set_color:
+            state["color"] = args.set_color
+            write_state(id, state)
+            return 0
+
+        if args.do_exit:
+            state["command"] = "exit"
+            write_state(id, state)
+            return 0
+
+        parser.error("--manage requires --set-color or --exit")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
