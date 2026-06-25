@@ -26,7 +26,7 @@ def test_write_and_read_state(tmp_path, monkeypatch):
     result = read_state("ab12")
     assert result == {"color": "green", "command": None}
 
-def test_write_state_atomic(tmp_path, monkeypatch):
+def test_write_state_creates_missing_dir(tmp_path, monkeypatch):
     """State dir is created automatically."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
