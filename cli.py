@@ -68,8 +68,11 @@ def cmd_create() -> None:
     write_state(id, {"color": "green", "command": None})
     window_path = Path(__file__).parent / "window.py"
     if sys.platform == "win32":
+        exe = sys.executable.replace("python.exe", "pythonw.exe")
+        if not Path(exe).exists():
+            exe = sys.executable
         subprocess.Popen(
-            [sys.executable, str(window_path), id],
+            [exe, str(window_path), id],
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
             close_fds=True,
         )
