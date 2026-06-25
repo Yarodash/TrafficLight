@@ -12,7 +12,13 @@ Visual status indicator for [Claude Code](https://claude.ai/code). A small alway
 | 🟡 Yellow | Transitioning to green |
 | 🟢 Green | Done / waiting for input |
 
+| Working | Idle |
+|---------|------|
+| ![red](example/red_example.png) | ![green](example/green_example.png) |
+
 Right-click the window for settings: opacity slider, red↔green inversion toggle, auto-focus (switches to the Claude terminal on green), session stats chart.
+
+![settings](example/settings_example.png)
 
 ## Requirements
 
