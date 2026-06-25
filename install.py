@@ -79,39 +79,47 @@ def main() -> None:
     sid_file   = '"$env:USERPROFILE\\.claude\\traffic_$sid.txt"'
     sid_prefix = f'$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $sid = $j.session_id -replace \'[^A-Za-z0-9-]\', \'\'; $f = {sid_file};'
 
+    def _group(hook_dict: dict) -> dict:
+        return {"hooks": [hook_dict]}
+
     new_hooks: dict[str, list] = {
-        "SessionStart": [[
+        "SessionStart": [_group(
             _hook(
                 f'{sid_prefix} if (Test-Path $f) {{ $old = (Get-Content $f).Trim();'
                 f' python "{cli}" --manage $old --exit 2>$null }};'
                 f' $id = python "{cli}" --create; $id | Out-File -FilePath $f -NoNewline -Encoding UTF8'
             ) | {"statusMessage": "Starting TrafficLight..."}
-        ]],
-        "UserPromptSubmit": [[
+        )],
+        "UserPromptSubmit": [_group(
             _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color red }}')
-        ]],
-        "PreToolUse": [[
+        )],
+        "PreToolUse": [_group(
             _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color red }}')
-        ]],
-        "PostToolUse": [[
+        )],
+        "PostToolUse": [_group(
             _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color red }}')
-        ]],
-        "Stop": [[
+        )],
+        "Stop": [_group(
             _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color yellow; Start-Sleep 1; python "{cli}" --manage $id --set-color green }}')
-        ]],
-        "Notification": [[
+        )],
+        "Notification": [_group(
             _async_hook(f'{sid_prefix} if (Test-Path $f) {{ $id = (Get-Content $f).Trim(); python "{cli}" --manage $id --set-color yellow; Start-Sleep 1; python "{cli}" --manage $id --set-color green }}')
-        ]],
+        )],
     }
+
+    def _is_ours(group) -> bool:
+        if isinstance(group, dict):
+            entries = group.get("hooks") or []
+        elif isinstance(group, list):
+            entries = group
+        else:
+            return False
+        return any(isinstance(h, dict) and cli in h.get("command", "") for h in entries)
 
     hooks = settings.setdefault("hooks", {})
     for event, new_groups in new_hooks.items():
         existing = hooks.get(event, [])
-        # remove any previous TrafficLight entries (by cli path marker)
-        cleaned = [g for g in existing if not any(
-            cli in h.get("command", "") for h in (g.get("hooks") or [g]) if isinstance(h, dict)
-        )]
-        # append new group
+        cleaned = [g for g in existing if not _is_ours(g)]
         hooks[event] = cleaned + new_groups
 
     settings_path.write_text(

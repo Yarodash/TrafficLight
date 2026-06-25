@@ -21,6 +21,14 @@ Right-click the window for settings: opacity slider, red↔green inversion toggl
 
 ## Install
 
+Easiest — ask Claude Code to do it:
+
+```powershell
+claude -p "install https://github.com/Yarodash/TrafficLight"
+```
+
+Or run the installer directly:
+
 ```powershell
 python install.py https://github.com/Yarodash/TrafficLight D:/TrafficLight
 ```
