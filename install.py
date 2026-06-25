@@ -84,16 +84,36 @@ def main() -> None:
     read_id  = 'try { $id = [IO.File]::ReadAllText($f).Trim() } catch { $id = "" }'
     write_id = 'for ($i=0; $i -lt 20; $i++) { try { [IO.File]::WriteAllText($f, $id); break } catch { Start-Sleep -Milliseconds 50 } }'
 
+    # SessionStart can fire multiple times per Claude session (startup + resume/clear),
+    # potentially concurrently. Serialize with a named mutex, and skip create if a
+    # live light already exists (state file ~/.trafficlight/<id>.json exists until
+    # the window deletes it on close).
+    session_start_cmd = (
+        f'{sid_prefix}'
+        f' $mutex = [System.Threading.Mutex]::new($false, "TrafficLight_$sid");'
+        f' try {{'
+        f'   try {{ $mutex.WaitOne(5000) | Out-Null }} catch {{}};'
+        f'   $skip = $false;'
+        f'   if (Test-Path $f) {{'
+        f'     try {{ $old = [IO.File]::ReadAllText($f).Trim() }} catch {{ $old = "" }};'
+        f'     if ($old -and (Test-Path "$env:USERPROFILE\\.trafficlight\\$old.json")) {{ $skip = $true }}'
+        f'   }};'
+        f'   if (-not $skip) {{'
+        f'     $id = python "{cli}" --create;'
+        f'     {write_id}'
+        f'   }}'
+        f' }} finally {{'
+        f'   try {{ $mutex.ReleaseMutex() }} catch {{}};'
+        f'   $mutex.Dispose()'
+        f' }}'
+    )
+
     def _group(hook_dict: dict) -> dict:
         return {"hooks": [hook_dict]}
 
     new_hooks: dict[str, list] = {
         "SessionStart": [_group(
-            _hook(
-                f'{sid_prefix} if (Test-Path $f) {{ try {{ $old = [IO.File]::ReadAllText($f).Trim() }} catch {{ $old = "" }};'
-                f' if ($old) {{ python "{cli}" --manage $old --exit 2>$null }} }};'
-                f' $id = python "{cli}" --create; {write_id}'
-            ) | {"statusMessage": "Starting TrafficLight..."}
+            _hook(session_start_cmd) | {"statusMessage": "Starting TrafficLight..."}
         )],
         "UserPromptSubmit": [_group(
             _async_hook(f'{sid_prefix} if (Test-Path $f) {{ {read_id}; if ($id) {{ python "{cli}" --manage $id --set-color red }} }}')
