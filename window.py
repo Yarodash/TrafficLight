@@ -641,6 +641,7 @@ class TrafficLight(QLabel):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self._set_color("green")
 
