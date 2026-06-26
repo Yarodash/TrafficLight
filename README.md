@@ -14,6 +14,8 @@ Visual status indicator for [Claude Code](https://claude.ai/code). A small alway
 |---------|------|
 | ![red](example/red_example.png) | ![green](example/green_example.png) |
 
+Hover the light to see a live preview of the Claude terminal window; click it to bring that terminal to front.
+
 Right-click the window for settings: opacity slider, red↔green inversion toggle, auto-focus (switches to the Claude terminal on green), session stats chart.
 
 ![settings](example/settings_example.png)
