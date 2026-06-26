@@ -23,6 +23,51 @@ INVERT = {"red": "green", "green": "red", "yellow": "yellow"}
 
 _user32   = ctypes.windll.user32
 _kernel32 = ctypes.windll.kernel32
+_dwmapi   = ctypes.windll.dwmapi
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ("left",   ctypes.c_long),
+        ("top",    ctypes.c_long),
+        ("right",  ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+class _DWM_THUMBNAIL_PROPERTIES(ctypes.Structure):
+    _fields_ = [
+        ("dwFlags",               ctypes.c_ulong),
+        ("rcDestination",         _RECT),
+        ("rcSource",              _RECT),
+        ("opacity",               ctypes.c_ubyte),
+        ("fVisible",              ctypes.c_int),
+        ("fSourceClientAreaOnly", ctypes.c_int),
+    ]
+
+
+_DWM_TNP_RECTDESTINATION      = 0x00000001
+_DWM_TNP_VISIBLE              = 0x00000008
+_DWM_TNP_OPACITY              = 0x00000004
+_DWM_TNP_SOURCECLIENTAREAONLY = 0x00000010
+
+_dwmapi.DwmRegisterThumbnail.argtypes = [
+    wt.HWND, wt.HWND, ctypes.POINTER(ctypes.c_void_p)
+]
+_dwmapi.DwmRegisterThumbnail.restype = ctypes.c_long
+_dwmapi.DwmUpdateThumbnailProperties.argtypes = [
+    ctypes.c_void_p, ctypes.POINTER(_DWM_THUMBNAIL_PROPERTIES)
+]
+_dwmapi.DwmUpdateThumbnailProperties.restype = ctypes.c_long
+_dwmapi.DwmUnregisterThumbnail.argtypes = [ctypes.c_void_p]
+_dwmapi.DwmUnregisterThumbnail.restype = ctypes.c_long
+
+_user32.GetWindowRect.argtypes = [wt.HWND, ctypes.POINTER(_RECT)]
+_user32.GetWindowRect.restype  = ctypes.c_int
+_user32.IsIconic.argtypes      = [wt.HWND]
+_user32.IsIconic.restype       = ctypes.c_int
+_user32.IsWindow.argtypes      = [wt.HWND]
+_user32.IsWindow.restype       = ctypes.c_int
 
 
 def state_path(id: str) -> Path:
@@ -79,14 +124,33 @@ def _enum_visible_windows() -> list[tuple[int, int, str]]:
     return results
 
 
-def _focus_pid_window(pid: int) -> bool:
+def _find_pid_hwnd(pid: int) -> int | None:
+    """Resolve the most likely terminal window HWND for the given Claude PID.
+
+    Walks the ancestor chain, collects every visible window that belongs to
+    a non-skip ancestor (or to a conhost child of one), and scores them by
+    how strongly they look like THIS Claude's window — preferring titles
+    that contain the Claude process's cwd basename and/or Claude's spinner
+    glyphs. Falls back to any visible terminal-process window with the same
+    scoring if the ancestor chain yields nothing.
+    """
     windows = _enum_visible_windows()
-    pid_to_hwnds: dict[int, list[int]] = {}
-    for hwnd, wpid, _ in windows:
-        pid_to_hwnds.setdefault(wpid, []).append(hwnd)
+    pid_to_entries: dict[int, list[tuple[int, str]]] = {}
+    for hwnd, wpid, title in windows:
+        pid_to_entries.setdefault(wpid, []).append((hwnd, title))
 
     if not _psutil:
-        return False
+        return None
+
+    # Cwd basename of the Claude process — the strongest per-session signal,
+    # because terminals (PowerShell/WT/Claude itself) bake it into the title.
+    cwd_hint = ""
+    try:
+        cwd = _psutil.Process(pid).cwd()
+        if cwd:
+            cwd_hint = Path(cwd).name.lower()
+    except Exception:
+        pass
 
     ancestor_chain: list[int] = []
     try:
@@ -108,6 +172,35 @@ def _focus_pid_window(pid: int) -> bool:
     except Exception:
         pass
 
+    def _has_claude_glyph(title: str) -> bool:
+        return any(c in title for c in _CLAUDE_TITLE_HINTS)
+
+    def _score(title: str) -> int:
+        t = title.lower()
+        s = 0
+        if cwd_hint and cwd_hint in t:
+            s += 100
+        if _has_claude_glyph(title):
+            s += 10
+        return s
+
+    def _pick(entries: list[tuple[int, str]]) -> int | None:
+        if not entries:
+            return None
+        ranked = sorted(entries, key=lambda e: _score(e[1]), reverse=True)
+        return ranked[0][0]
+
+    # Collect every candidate (hwnd, title) reachable from the ancestor chain —
+    # both ancestors themselves and any conhost children they own.
+    candidates: list[tuple[int, str]] = []
+    seen_hwnds: set[int] = set()
+
+    def _push(entries):
+        for hwnd, title in entries:
+            if hwnd not in seen_hwnds:
+                seen_hwnds.add(hwnd)
+                candidates.append((hwnd, title))
+
     for apid in ancestor_chain:
         try:
             name = _psutil.Process(apid).name().lower()
@@ -115,16 +208,18 @@ def _focus_pid_window(pid: int) -> bool:
             name = ""
         if name in _SKIP_PROCS:
             continue
-        if apid in pid_to_hwnds:
-            _bring_hwnd_to_front(pid_to_hwnds[apid][0])
-            return True
+        if apid in pid_to_entries:
+            _push(pid_to_entries[apid])
         try:
             for child in _psutil.Process(apid).children():
-                if child.name().lower() == "conhost.exe" and child.pid in pid_to_hwnds:
-                    _bring_hwnd_to_front(pid_to_hwnds[child.pid][0])
-                    return True
+                if child.name().lower() == "conhost.exe" and child.pid in pid_to_entries:
+                    _push(pid_to_entries[child.pid])
         except Exception:
             pass
+
+    best = _pick(candidates)
+    if best is not None:
+        return best
 
     term_pids: set[int] = set()
     try:
@@ -134,20 +229,135 @@ def _focus_pid_window(pid: int) -> bool:
     except Exception:
         pass
 
-    claude_hwnd = fallback_hwnd = None
-    for hwnd, wpid, title in windows:
-        if wpid not in term_pids:
-            continue
-        fallback_hwnd = fallback_hwnd or hwnd
-        if any(c in title for c in _CLAUDE_TITLE_HINTS):
-            claude_hwnd = hwnd
-            break
+    term_candidates = [
+        (hwnd, title) for hwnd, wpid, title in windows if wpid in term_pids
+    ]
+    return _pick(term_candidates)
 
-    target = claude_hwnd or fallback_hwnd
-    if target:
-        _bring_hwnd_to_front(target)
+
+def _focus_pid_window(pid: int) -> bool:
+    hwnd = _find_pid_hwnd(pid)
+    if hwnd:
+        _bring_hwnd_to_front(hwnd)
         return True
     return False
+
+
+# ── hover preview window ───────────────────────────────────────────────────────
+
+class PreviewWindow(QWidget):
+    """Live DWM thumbnail of the target Claude console — at its real size & position."""
+
+    PAD        = 8
+    FALLBACK_W = 800
+    FALLBACK_H = 500
+
+    def __init__(self, light_widget: "TrafficLight", source_hwnd: int) -> None:
+        super().__init__()
+        self._source_hwnd = source_hwnd
+        self._thumb: ctypes.c_void_p | None = None
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowTransparentForInput
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+        screen = QApplication.primaryScreen().geometry()
+
+        rect = _RECT()
+        have_rect = (
+            _user32.GetWindowRect(source_hwnd, ctypes.byref(rect))
+            and not _user32.IsIconic(source_hwnd)
+            and rect.right - rect.left > 0
+            and rect.bottom - rect.top > 0
+            and rect.left > -10000  # minimized windows report ~-32000
+        )
+
+        dpr = self.devicePixelRatioF() or 1.0
+        if have_rect:
+            inner_w = max(int((rect.right - rect.left) / dpr), 80)
+            inner_h = max(int((rect.bottom - rect.top) / dpr), 60)
+            src_x   = int(rect.left / dpr)
+            src_y   = int(rect.top  / dpr)
+        else:
+            inner_w, inner_h = self.FALLBACK_W, self.FALLBACK_H
+            src_x = src_y = None
+
+        # cap to screen so we never overflow even for huge windows
+        inner_w = min(inner_w, screen.width()  - self.PAD * 2)
+        inner_h = min(inner_h, screen.height() - self.PAD * 2)
+
+        self._inner = (inner_w, inner_h)
+        total_w = inner_w + self.PAD * 2
+        total_h = inner_h + self.PAD * 2
+        self.setFixedSize(total_w, total_h)
+
+        if src_x is not None:
+            x = src_x - self.PAD
+            y = src_y - self.PAD
+        else:
+            lp = light_widget.pos()
+            x = lp.x() - total_w - 8
+            y = lp.y()
+
+        x = max(0, min(x, screen.width()  - total_w))
+        y = max(0, min(y, screen.height() - total_h))
+        self.move(x, y)
+
+        self.show()
+        QTimer.singleShot(0, self._register_thumbnail)
+
+    def _register_thumbnail(self) -> None:
+        try:
+            dest_hwnd = wt.HWND(int(self.winId()))
+        except Exception:
+            return
+
+        thumb = ctypes.c_void_p()
+        hr = _dwmapi.DwmRegisterThumbnail(
+            dest_hwnd, wt.HWND(self._source_hwnd), ctypes.byref(thumb)
+        )
+        if hr != 0 or not thumb.value:
+            return
+        self._thumb = thumb
+
+        inner_w, inner_h = self._inner
+        props = _DWM_THUMBNAIL_PROPERTIES()
+        props.dwFlags = (
+            _DWM_TNP_RECTDESTINATION
+            | _DWM_TNP_VISIBLE
+            | _DWM_TNP_OPACITY
+            | _DWM_TNP_SOURCECLIENTAREAONLY
+        )
+        props.rcDestination = _RECT(
+            self.PAD, self.PAD, self.PAD + inner_w, self.PAD + inner_h
+        )
+        props.opacity = 255
+        props.fVisible = 1
+        props.fSourceClientAreaOnly = 0
+        _dwmapi.DwmUpdateThumbnailProperties(self._thumb, ctypes.byref(props))
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, self.width(), self.height()), 10, 10)
+        p.fillPath(path, QColor(22, 22, 28, 235))
+        p.setPen(QPen(QColor(80, 80, 95), 1))
+        p.drawPath(path)
+        p.end()
+
+    def closeEvent(self, event):
+        if self._thumb:
+            try:
+                _dwmapi.DwmUnregisterThumbnail(self._thumb)
+            except Exception:
+                pass
+            self._thumb = None
+        super().closeEvent(event)
 
 
 # ── chart window ───────────────────────────────────────────────────────────────
@@ -387,16 +597,20 @@ class _OpacityWidget(QWidget):
 # ── main widget ────────────────────────────────────────────────────────────────
 
 class TrafficLight(QLabel):
-    def __init__(self, id: str, watch_pid: int | None = None) -> None:
+    def __init__(self, id: str, watch_pid: int | None = None, terminal_hwnd: int | None = None) -> None:
         super().__init__()
         self.id            = id
         self.watch_pid     = watch_pid
+        self.terminal_hwnd = terminal_hwnd
         self.current_color = "green"
         self._drag_pos     = QPoint()
+        self._press_pos    = QPoint()
+        self._was_dragged  = False
         self._inverted     = False
         self._opacity      = 100
         self._auto_focus   = False
         self._chart_win: ChartWindow | None = None
+        self._preview_win: PreviewWindow | None = None
 
         # Snapshot the watched Claude process so a PID reuse later doesn't
         # keep us alive forever after the real Claude has exited.
@@ -439,8 +653,20 @@ class TrafficLight(QLabel):
         self._timer.timeout.connect(self._poll)
         self._timer.start(100)
 
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.timeout.connect(self._show_preview)
+
     def _displayed(self, color: str) -> str:
         return INVERT[color] if self._inverted else color
+
+    def _resolve_hwnd(self) -> int | None:
+        """HWND of the terminal hosting this Claude — snapshot first, fallback to heuristic."""
+        if self.terminal_hwnd and _user32.IsWindow(self.terminal_hwnd):
+            return self.terminal_hwnd
+        if self.watch_pid:
+            return _find_pid_hwnd(self.watch_pid)
+        return None
 
     def _set_color(self, color: str) -> None:
         prev = self.current_color
@@ -451,8 +677,10 @@ class TrafficLight(QLabel):
 
         if color != prev:
             self._history.append((time.time(), color))
-            if color == "green" and self._auto_focus and self.watch_pid:
-                _focus_pid_window(self.watch_pid)
+            if color == "green" and self._auto_focus:
+                hwnd = self._resolve_hwnd()
+                if hwnd:
+                    _bring_hwnd_to_front(hwnd)
 
     def _watch_dead(self) -> bool:
         """True iff the original Claude process is gone (and not a PID reuse)."""
@@ -479,6 +707,7 @@ class TrafficLight(QLabel):
             except Exception:
                 pass
             self._chart_win = None
+        self._hide_preview()
         self.close()
         app = QApplication.instance()
         if app is not None:
@@ -564,13 +793,57 @@ class TrafficLight(QLabel):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._drag_pos    = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._press_pos   = e.globalPosition().toPoint()
+            self._was_dragged = False
         elif e.button() == Qt.MouseButton.RightButton:
             self._show_menu(e.globalPosition().toPoint())
 
     def mouseMoveEvent(self, e):
         if e.buttons() & Qt.MouseButton.LeftButton:
-            self.move(e.globalPosition().toPoint() - self._drag_pos)
+            cur = e.globalPosition().toPoint()
+            if not self._was_dragged:
+                d = cur - self._press_pos
+                if abs(d.x()) + abs(d.y()) <= 4:
+                    return
+                self._was_dragged = True
+                self._hide_preview()
+                self._preview_timer.stop()
+            self.move(cur - self._drag_pos)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and not self._was_dragged:
+            self._hide_preview()
+            self._preview_timer.stop()
+            hwnd = self._resolve_hwnd()
+            if hwnd:
+                _bring_hwnd_to_front(hwnd)
+
+    def enterEvent(self, event):
+        if self.watch_pid or self.terminal_hwnd:
+            self._preview_timer.start(120)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._preview_timer.stop()
+        self._hide_preview()
+        super().leaveEvent(event)
+
+    def _show_preview(self) -> None:
+        if self._preview_win:
+            return
+        hwnd = self._resolve_hwnd()
+        if not hwnd:
+            return
+        self._preview_win = PreviewWindow(self, hwnd)
+
+    def _hide_preview(self) -> None:
+        if self._preview_win:
+            try:
+                self._preview_win.close()
+            except Exception:
+                pass
+            self._preview_win = None
 
 
 def main() -> None:
@@ -578,11 +851,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("id")
     parser.add_argument("--watch-pid", type=int, default=None)
+    parser.add_argument("--terminal-hwnd", type=int, default=None)
     args, remaining = parser.parse_known_args()
 
     app = QApplication([sys.argv[0]] + remaining)
     app.setQuitOnLastWindowClosed(True)
-    _win = TrafficLight(args.id, watch_pid=args.watch_pid)
+    _win = TrafficLight(args.id, watch_pid=args.watch_pid, terminal_hwnd=args.terminal_hwnd)
     sys.exit(app.exec())
 
 

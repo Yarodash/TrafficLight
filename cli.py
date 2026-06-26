@@ -67,6 +67,44 @@ Colors:
 """
 
 
+_TERMINAL_PROC_NAMES = {
+    "windowsterminal.exe", "wt.exe", "conhost.exe",
+    "alacritty.exe", "wezterm.exe", "mintty.exe", "hyper.exe",
+    "openconsole.exe",
+}
+
+
+def _capture_terminal_hwnd() -> int | None:
+    """Snapshot the foreground HWND if it's a terminal window.
+
+    Called at SessionStart-hook time, when the user just hit Enter to launch
+    Claude in this terminal — so the foreground window IS the one hosting
+    this Claude. Saves us guessing later among multiple WT windows.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        pid_holder = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_holder))
+        wpid = pid_holder.value
+        if not wpid or _psutil is None:
+            return None
+        try:
+            name = _psutil.Process(wpid).name().lower()
+        except Exception:
+            return None
+        if name in _TERMINAL_PROC_NAMES:
+            return int(hwnd)
+        return None
+    except Exception:
+        return None
+
+
 def _find_claude_pid() -> int | None:
     """Walk the process tree upward looking for a Claude Code process."""
     if _psutil is None:
@@ -230,14 +268,19 @@ def cmd_create() -> None:
         if not uv.exists():
             uv = Path(sys.executable)
 
+        terminal_hwnd = _capture_terminal_hwnd()
+
         cmd = [str(uv), str(window_path), id]
         if claude_pid:
             cmd += ["--watch-pid", str(claude_pid)]
+        if terminal_hwnd:
+            cmd += ["--terminal-hwnd", str(terminal_hwnd)]
 
         write_state(id, {
             "color": "green",
             "command": None,
             "watch_pid": claude_pid,
+            "terminal_hwnd": terminal_hwnd,
         })
 
         if sys.platform == "win32":
